@@ -2,17 +2,6 @@
 
 ---
 
-## 👥 Nama Anggota Kelompok
-
-| Nama | NIM |
-|---|---|
-| Muhammad Rizky Febrianto | 2409116045 |
-| Chiqo Nanda Rial Pratama | 2409116046 |
-| Daffa Syahrandy Husain | 2409116069 |
-| Marcela Persa Linthin| 2409116072 |
-
----
-
 ## 📝 Deskripsi Aplikasi
 
 Aplikasi mobile berbasis **Flutter** dan **Supabase** untuk manajemen penjualan akun premium, pelacakan masa aktif langganan, serta pengelolaan klaim garansi secara end-to-end.
@@ -137,84 +126,6 @@ Digunakan untuk:
 
 ---
 
-## 📁 Struktur Folder
-
-```
-lib/
-├── core/
-│   ├── constants.dart 
-│   ├── routes.dart 
-│   ├── theme.dart
-│   └── theme_provider.dart
-│
-├── features/
-│   ├── auth/
-│   │   ├── login_page.dart
-│   │   └── register_page.dart
-│   ├── admin/
-│   │   ├── admin_main_page.dart
-│   │   ├── admin_dashboard_page.dart
-│   │   ├── admin_market_page.dart
-│   │   ├── admin_order_page.dart
-│   │   ├── admin_order_detail_page.dart
-│   │   ├── admin_product_detail_page.dart
-│   │   ├── admin_add_product_page.dart
-│   │   ├── admin_add_variant_page.dart
-│   │   ├── admin_garansi_page.dart
-│   │   ├── admin_garansi_detail_page.dart
-│   │   └── admin_setting_page.dart
-│   └── customer/
-│       ├── home_page.dart
-│       ├── product_page.dart
-│       ├── product_detail_page.dart
-│       ├── checkout_page.dart
-│       ├── payment_page.dart
-│       ├── order_page.dart
-│       ├── order_detail_page.dart
-│       ├── profile_page.dart
-│       ├── edit_profile_page.dart
-│       ├── garansi_page.dart
-│       ├── garansi_detail_page.dart
-│       ├── garansiformpage.dart
-│       ├── rules_page.dart
-│       └── social_page.dart
-│
-├── services/
-│   ├── auth_service.dart
-│   ├── order_service.dart
-│   ├── product_service.dart
-│   ├── claims_service.dart
-│   ├── admin_service.dart
-│   └── supabase_service.dart
-│
-├── widgets/
-│   ├── buttons/primary_button.dart
-│   ├── inputs/search_input.dart
-│   ├── navbar/bottom_navbar.dart
-│   ├── shared/
-│   │   ├── empty_state.dart
-│   │   ├── section_header.dart
-│   │   ├── section_title.dart
-│   │   ├── spacing.dart
-│   │   └── status_badge.dart
-│   └── cards/
-│       ├── admin_menu_card.dart
-│       ├── app_card.dart
-│       ├── app_logo.dart
-│       ├── checkout_item_card.dart
-│       ├── info_item.dart
-│       ├── menu_item.dart
-│       ├── order_card.dart
-│       ├── payment_card.dart
-│       ├── plan_card.dart
-│       ├── premium_product_tile.dart
-│       └── product_card.dart
-│
-└── main.dart
-```
-
----
-
 ## 🗄️ Database (Supabase)
 
 | Tabel | Fungsi |
@@ -249,5 +160,3 @@ lib/
     <td><img width="317" height="696" alt="image" src="https://github.com/user-attachments/assets/2fca8679-3661-49b8-9df7-33ef3c3126ca" /></td>
   </tr>
   </table>
-
- 
