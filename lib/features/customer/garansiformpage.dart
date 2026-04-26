@@ -1,9 +1,24 @@
-import 'dart:typed_data';
+// ============================================================
+// SENSOR 1: CAMERA — GaransiFormPage
+// Package: image_picker
+// Tambahkan di pubspec.yaml:
+//   image_picker: ^1.1.2
+//
+// Android: tambahkan di android/app/src/main/AndroidManifest.xml
+//   <uses-permission android:name="android.permission.CAMERA"/>
+//
+// iOS: tambahkan di ios/Runner/Info.plist
+//   <key>NSCameraUsageDescription</key>
+//   <string>Diperlukan untuk foto bukti kerusakan</string>
+//   <key>NSPhotoLibraryUsageDescription</key>
+//   <string>Diperlukan untuk memilih foto bukti kerusakan</string>
+// ============================================================
+
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/constants.dart';
-import '../../services/claims_service.dart';
 
 class GaransiFormPage extends StatefulWidget {
   const GaransiFormPage({super.key});
@@ -15,44 +30,39 @@ class GaransiFormPage extends StatefulWidget {
 class _GaransiFormPageState extends State<GaransiFormPage>
     with SingleTickerProviderStateMixin {
   final supabase = Supabase.instance.client;
-  final service = ClaimsService();
+
+  // ✅ SENSOR: ImagePicker untuk akses kamera & galeri
+  final ImagePicker _picker = ImagePicker();
 
   final _descController = TextEditingController();
 
-  String selectedReason = "Cannot login";
-  XFile? pickedFile;
-  Uint8List? imageBytes;
-  bool _isSubmitting = false;
+  // ✅ File gambar yang dipilih dari kamera/galeri
+  File? _proofImage;
+  String? _uploadedImageUrl;
 
-  // ✅ Animasi konsisten dengan seluruh halaman
+  bool _isLoading = false;
+  bool _isUploading = false;
+
+  bool _didInit = false;
+
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
-
-  final reasons = [
-    ("Cannot login", Icons.lock_outline),
-    ("Account expired early", Icons.timer_off_outlined),
-    ("Wrong account", Icons.person_off_outlined),
-    ("Other problem", Icons.help_outline_rounded),
-  ];
 
   @override
   void initState() {
     super.initState();
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 700),
+      duration: const Duration(milliseconds: 600),
     );
-    _fadeAnim = CurvedAnimation(
-      parent: _animController,
-      curve: Curves.easeOut,
-    );
+    _fadeAnim =
+        CurvedAnimation(parent: _animController, curve: Curves.easeOut);
     _slideAnim = Tween<Offset>(
-      begin: const Offset(0, 0.07),
+      begin: const Offset(0, 0.06),
       end: Offset.zero,
     ).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeOut),
-    );
+        CurvedAnimation(parent: _animController, curve: Curves.easeOut));
     _animController.forward();
   }
 
@@ -63,9 +73,236 @@ class _GaransiFormPageState extends State<GaransiFormPage>
     super.dispose();
   }
 
-  // ─────────────────────────────────
-  // SNACKBAR — konsisten semua halaman
-  // ─────────────────────────────────
+  // ============================================================
+  // SENSOR CAMERA: Ambil foto dari kamera atau galeri
+  // ============================================================
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      // ✅ Akses sensor kamera device
+      final XFile? pickedFile = await _picker.pickImage(
+        source: source,         // ImageSource.camera atau ImageSource.gallery
+        imageQuality: 80,       // Kompres agar tidak terlalu besar
+        maxWidth: 1280,
+        maxHeight: 1280,
+      );
+
+      if (pickedFile == null) return; // User batal
+
+      setState(() => _proofImage = File(pickedFile.path));
+
+      // Auto-upload setelah foto dipilih
+      await _uploadImage(File(pickedFile.path));
+    } catch (e) {
+      _showSnackBar('Gagal mengakses kamera: ${e.toString()}',
+          isError: true);
+    }
+  }
+
+  // ✅ Upload foto ke Supabase Storage
+  Future<void> _uploadImage(File imageFile) async {
+    setState(() => _isUploading = true);
+
+    try {
+      final fileName =
+          'garansi_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      await supabase.storage
+          .from('proof-images')
+          .upload(fileName, imageFile);
+
+      final publicUrl = supabase.storage
+          .from('proof-images')
+          .getPublicUrl(fileName);
+
+      if (!mounted) return;
+      setState(() => _uploadedImageUrl = publicUrl);
+      _showSnackBar('Foto berhasil diupload', isError: false);
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar('Gagal upload foto: ${e.toString()}', isError: true);
+      setState(() => _proofImage = null);
+    } finally {
+      if (mounted) setState(() => _isUploading = false);
+    }
+  }
+
+  // ✅ Dialog pilih sumber: Kamera atau Galeri
+  void _showImageSourceDialog(ThemeData theme, bool isDark) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            gradient: LinearGradient(
+              colors: isDark
+                  ? [const Color(0xFF1B1B2F), const Color(0xFF23233A)]
+                  : [Colors.white, Colors.grey.shade50],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.05),
+            ),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 30,
+                  offset: const Offset(0, 10)),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                "Pilih Sumber Foto",
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                "Ambil foto langsung atau dari galeri",
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  // ✅ 
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickImage(ImageSource.camera);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          gradient: LinearGradient(
+                            colors: [
+                              theme.colorScheme.primary,
+                              theme.colorScheme.secondary,
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.35),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.camera_alt_outlined,
+                                color: isDark ? Colors.black : Colors.white,
+                                size: 28),
+                            const SizedBox(height: 6),
+                            Text(
+                              "Kamera",
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: isDark ? Colors.black : Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Tombol akses galeri
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickImage(ImageSource.gallery);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          color: isDark
+                              ? Colors.white.withValues(alpha: 0.07)
+                              : Colors.grey.shade100,
+                          border: Border.all(
+                            color: theme.colorScheme.primary
+                                .withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.photo_library_outlined,
+                                color: theme.colorScheme.primary, size: 28),
+                            const SizedBox(height: 6),
+                            Text(
+                              "Galeri",
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submitClaim(Map data) async {
+    if (_descController.text.trim().isEmpty) {
+      _showSnackBar('Deskripsi masalah wajib diisi', isError: true);
+      return;
+    }
+    if (_uploadedImageUrl == null) {
+      _showSnackBar('Foto bukti kerusakan wajib diupload', isError: true);
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      await supabase.from('claims').insert({
+        'order_id': data['id'],
+        'problem_description': _descController.text.trim(),
+        'proof_image': _uploadedImageUrl,
+        'status': 'pending',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      if (!mounted) return;
+      _showSnackBar('Klaim garansi berhasil dikirim!', isError: false);
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar(e.toString().replaceAll('Exception: ', ''), isError: true);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   void _showSnackBar(String message, {required bool isError}) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -83,97 +320,24 @@ class _GaransiFormPageState extends State<GaransiFormPage>
         ),
         backgroundColor: isError ? Colors.redAccent : Colors.green,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),
       ),
     );
-  }
-
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
-
-    final ext = picked.name.split('.').last.toLowerCase();
-    if (!['jpg', 'jpeg', 'png'].contains(ext)) {
-      _showSnackBar('Hanya file JPG, JPEG, PNG yang diperbolehkan',
-          isError: true);
-      return;
-    }
-
-    final bytes = await picked.readAsBytes();
-    if (bytes.length > 5 * 1024 * 1024) {
-      _showSnackBar('Ukuran file maksimal 5MB', isError: true);
-      return;
-    }
-
-    setState(() {
-      pickedFile = picked;
-      imageBytes = bytes;
-    });
-  }
-
-  Future<void> _submitClaim(Map order) async {
-    FocusScope.of(context).unfocus();
-
-    if (_descController.text.trim().isEmpty) {
-      _showSnackBar('Deskripsi masalah wajib diisi', isError: true);
-      return;
-    }
-
-    final user = supabase.auth.currentUser;
-    if (user == null) return;
-
-    setState(() => _isSubmitting = true);
-
-    try {
-      String? uploadedUrl;
-
-      if (imageBytes != null && pickedFile != null) {
-        final fileName =
-            '${user.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        await supabase.storage
-            .from('claim-proofs')
-            .uploadBinary(fileName, imageBytes!);
-        uploadedUrl = supabase.storage
-            .from('claim-proofs')
-            .getPublicUrl(fileName);
-      }
-
-      await service.createClaim(
-        orderId: order['id'],
-        userId: user.id,
-        description: '$selectedReason - ${_descController.text.trim()}',
-        imageUrl: uploadedUrl,
-      );
-
-      if (!mounted) return;
-
-      _showSnackBar('Laporan berhasil dikirim!', isError: false);
-      Navigator.pop(context);
-    } catch (e) {
-      if (!mounted) return;
-      _showSnackBar(
-        e.toString().replaceAll('Exception: ', ''),
-        isError: true,
-      );
-    } finally {
-      if (mounted) setState(() => _isSubmitting = false);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final data = ModalRoute.of(context)?.settings.arguments as Map?;
 
-    final order = ModalRoute.of(context)?.settings.arguments as Map;
-    final imageUrl = order['products']?['image'];
+    if (data == null) {
+      return const Scaffold(body: Center(child: Text("No Data")));
+    }
 
     return Scaffold(
-      backgroundColor: isDark ? AppConstants.darkBg1 : Colors.white,
+      backgroundColor: Colors.transparent,
       body: Container(
         width: double.infinity,
         decoration: BoxDecoration(
@@ -187,7 +351,7 @@ class _GaransiFormPageState extends State<GaransiFormPage>
                 : [
                     Colors.white,
                     theme.colorScheme.primary.withValues(alpha: 0.04),
-                    theme.colorScheme.primary.withValues(alpha: 0.10),
+                    theme.colorScheme.primary.withValues(alpha: 0.1),
                   ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -195,710 +359,504 @@ class _GaransiFormPageState extends State<GaransiFormPage>
           ),
         ),
         child: SafeArea(
-          child: FadeTransition(
-            opacity: _fadeAnim,
-            child: SlideTransition(
-              position: _slideAnim,
-              child: Column(
-                children: [
-                  // ──────────────────────────────
-                  // CUSTOM APPBAR
-                  // ──────────────────────────────
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 16),
-                    child: Row(
+          child: Column(
+            children: [
+
+              // AppBar
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 16),
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => Navigator.pop(context),
+                      child: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: theme.colorScheme.primary
+                                .withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Icon(Icons.arrow_back_ios_new,
+                            size: 16, color: theme.colorScheme.primary),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      "Form Garansi",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const Spacer(),
+                    const SizedBox(width: 38),
+                  ],
+                ),
+              ),
+
+              Expanded(
+                child: FadeTransition(
+                  opacity: _fadeAnim,
+                  child: SlideTransition(
+                    position: _slideAnim,
+                    child: ListView(
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(24, 4, 24, 30),
                       children: [
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: theme.colorScheme.primary
-                                    .withValues(alpha: 0.3),
+
+                        // Info produk
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(22),
+                            gradient: LinearGradient(
+                              colors: isDark
+                                  ? [
+                                      Colors.white.withValues(alpha: 0.06),
+                                      Colors.white.withValues(alpha: 0.02),
+                                    ]
+                                  : [Colors.white, Colors.grey.shade50],
+                            ),
+                            border: Border.all(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.07)
+                                  : Colors.black.withValues(alpha: 0.04),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: theme.colorScheme.primary
+                                      .withValues(alpha: 0.1),
+                                ),
+                                child: Icon(Icons.shield_outlined,
+                                    color: theme.colorScheme.primary),
                               ),
-                            ),
-                            child: Icon(
-                              Icons.arrow_back_ios_new,
-                              size: 16,
-                              color: theme.colorScheme.primary,
-                            ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      data['product_name'] ?? '-',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: theme.colorScheme.onSurface,
+                                      ),
+                                    ),
+                                    Text(
+                                      data['variant_type'] ?? '-',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: theme.colorScheme.onSurface
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const Spacer(),
-                        Text(
-                          "Ajukan Garansi",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: theme.colorScheme.primary,
-                            letterSpacing: 0.5,
+
+                        const SizedBox(height: 20),
+
+                        // Form card
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(22),
+                            gradient: LinearGradient(
+                              colors: isDark
+                                  ? [
+                                      Colors.white.withValues(alpha: 0.06),
+                                      Colors.white.withValues(alpha: 0.02),
+                                    ]
+                                  : [Colors.white, Colors.grey.shade50],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            border: Border.all(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.04),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: isDark
+                                    ? Colors.black.withValues(alpha: 0.25)
+                                    : Colors.black.withValues(alpha: 0.06),
+                                blurRadius: 24,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+
+                              // Deskripsi masalah
+                              _fieldLabel("DESKRIPSI MASALAH", theme),
+                              TextField(
+                                controller: _descController,
+                                maxLines: 4,
+                                style: TextStyle(
+                                    fontSize: 14,
+                                    color: theme.colorScheme.onSurface),
+                                decoration: InputDecoration(
+                                  hintText:
+                                      "Jelaskan masalah yang kamu alami...",
+                                  hintStyle: TextStyle(
+                                    fontSize: 13,
+                                    color: theme.colorScheme.onSurface
+                                        .withValues(alpha: 0.35),
+                                  ),
+                                  filled: true,
+                                  fillColor: isDark
+                                      ? Colors.black.withValues(alpha: 0.35)
+                                      : Colors.grey.shade100,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(
+                                        AppConstants.radius),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(
+                                        AppConstants.radius),
+                                    borderSide: BorderSide(
+                                      color: theme.colorScheme.primary
+                                          .withValues(alpha: 0.5),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  contentPadding: const EdgeInsets.all(14),
+                                ),
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              // ══════════════════════════════════════
+                              // SENSOR CAMERA: Area upload foto
+                              // ══════════════════════════════════════
+                              _fieldLabel("FOTO BUKTI KERUSAKAN", theme),
+
+                              GestureDetector(
+                                onTap: () =>
+                                    _showImageSourceDialog(theme, isDark),
+                                child: AnimatedContainer(
+                                  duration:
+                                      const Duration(milliseconds: 300),
+                                  width: double.infinity,
+                                  height: _proofImage != null ? null : 160,
+                                  decoration: BoxDecoration(
+                                    borderRadius:
+                                        BorderRadius.circular(16),
+                                    color: isDark
+                                        ? Colors.white
+                                            .withValues(alpha: 0.05)
+                                        : Colors.grey.shade100,
+                                    border: Border.all(
+                                      color: _proofImage != null
+                                          ? theme.colorScheme.primary
+                                              .withValues(alpha: 0.4)
+                                          : theme.colorScheme.onSurface
+                                              .withValues(alpha: 0.12),
+                                      width: _proofImage != null ? 1.5 : 1,
+                                      // Dashed border visual
+                                    ),
+                                  ),
+                                  child: _isUploading
+                                      // Loading saat upload
+                                      ? Center(
+                                          child: Column(
+                                            mainAxisSize:
+                                                MainAxisSize.min,
+                                            children: [
+                                              CircularProgressIndicator(
+                                                color: theme
+                                                    .colorScheme.primary,
+                                                strokeWidth: 2.5,
+                                              ),
+                                              const SizedBox(height: 12),
+                                              Text(
+                                                "Mengupload foto...",
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  color: theme
+                                                      .colorScheme.onSurface
+                                                      .withValues(
+                                                          alpha: 0.5),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                      : _proofImage != null
+                                          // ✅ Preview foto dari kamera
+                                          ? Stack(
+                                              children: [
+                                                ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          15),
+                                                  child: Image.file(
+                                                    _proofImage!,
+                                                    width: double.infinity,
+                                                    fit: BoxFit.cover,
+                                                  ),
+                                                ),
+                                                // Badge sukses upload
+                                                if (_uploadedImageUrl !=
+                                                    null)
+                                                  Positioned(
+                                                    top: 10,
+                                                    right: 10,
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets
+                                                              .symmetric(
+                                                              horizontal: 10,
+                                                              vertical: 6),
+                                                      decoration:
+                                                          BoxDecoration(
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(20),
+                                                        color: Colors.green,
+                                                        boxShadow: [
+                                                          BoxShadow(
+                                                            color: Colors
+                                                                .black
+                                                                .withValues(
+                                                                    alpha:
+                                                                        0.3),
+                                                            blurRadius: 8,
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      child: Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: const [
+                                                          Icon(
+                                                              Icons
+                                                                  .check_circle,
+                                                              color: Colors
+                                                                  .white,
+                                                              size: 14),
+                                                          SizedBox(width: 4),
+                                                          Text(
+                                                            "Terupload",
+                                                            style: TextStyle(
+                                                                color: Colors
+                                                                    .white,
+                                                                fontSize: 11,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ),
+                                                // Tombol ganti foto
+                                                Positioned(
+                                                  bottom: 10,
+                                                  right: 10,
+                                                  child: GestureDetector(
+                                                    onTap: () {
+                                                      setState(() {
+                                                        _proofImage = null;
+                                                        _uploadedImageUrl =
+                                                            null;
+                                                      });
+                                                    },
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets
+                                                              .all(8),
+                                                      decoration:
+                                                          BoxDecoration(
+                                                        shape:
+                                                            BoxShape.circle,
+                                                        color: Colors.black
+                                                            .withValues(
+                                                                alpha: 0.6),
+                                                      ),
+                                                      child: const Icon(
+                                                          Icons.refresh,
+                                                          color: Colors.white,
+                                                          size: 18),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            )
+                                          // Placeholder sebelum foto dipilih
+                                          : Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.all(
+                                                          16),
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color: theme
+                                                        .colorScheme.primary
+                                                        .withValues(
+                                                            alpha: 0.08),
+                                                  ),
+                                                  child: Icon(
+                                                    Icons.camera_alt_outlined,
+                                                    size: 32,
+                                                    color: theme.colorScheme
+                                                        .primary
+                                                        .withValues(
+                                                            alpha: 0.5),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 10),
+                                                Text(
+                                                  "Tap untuk foto bukti kerusakan",
+                                                  style: TextStyle(
+                                                    fontSize: 13,
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                    color: theme.colorScheme
+                                                        .onSurface
+                                                        .withValues(
+                                                            alpha: 0.5),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  "Kamera atau galeri",
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: theme.colorScheme
+                                                        .onSurface
+                                                        .withValues(
+                                                            alpha: 0.3),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                ),
+                              ),
+                              // ══════════════════════════════════════
+
+                              const SizedBox(height: 24),
+
+                              // Submit button
+                              GestureDetector(
+                                onTap: _isLoading || _isUploading
+                                    ? null
+                                    : () => _submitClaim(data),
+                                child: AnimatedContainer(
+                                  duration:
+                                      const Duration(milliseconds: 200),
+                                  height: 52,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(
+                                        AppConstants.radius),
+                                    gradient: (_isLoading || _isUploading)
+                                        ? LinearGradient(colors: [
+                                            theme.colorScheme.primary
+                                                .withValues(alpha: 0.5),
+                                            theme.colorScheme.secondary
+                                                .withValues(alpha: 0.5),
+                                          ])
+                                        : LinearGradient(colors: [
+                                            theme.colorScheme.primary,
+                                            theme.colorScheme.secondary,
+                                          ]),
+                                    boxShadow:
+                                        (_isLoading || _isUploading)
+                                            ? []
+                                            : [
+                                                BoxShadow(
+                                                  color: theme
+                                                      .colorScheme.primary
+                                                      .withValues(alpha: 0.4),
+                                                  blurRadius: 16,
+                                                  offset:
+                                                      const Offset(0, 6),
+                                                ),
+                                              ],
+                                  ),
+                                  child: Center(
+                                    child: _isLoading
+                                        ? SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.5,
+                                              color: isDark
+                                                  ? Colors.black
+                                                  : Colors.white,
+                                            ),
+                                          )
+                                        : Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.send_rounded,
+                                                  size: 18,
+                                                  color: isDark
+                                                      ? Colors.black
+                                                      : Colors.white),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                "Kirim Klaim Garansi",
+                                                style: TextStyle(
+                                                  color: isDark
+                                                      ? Colors.black
+                                                      : Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 15,
+                                                  letterSpacing: 0.4,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const Spacer(),
-                        const SizedBox(width: 38),
                       ],
                     ),
                   ),
-
-                  // ──────────────────────────────
-                  // SCROLLABLE CONTENT
-                  // ──────────────────────────────
-                  Expanded(
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // ─────────────────────
-                          // HEADER PRODUK
-                          // ─────────────────────
-                          _buildProductCard(
-                              context, theme, isDark, order, imageUrl),
-
-                          const SizedBox(height: 24),
-
-                          // ─────────────────────
-                          // PILIH KENDALA
-                          // ─────────────────────
-                          _sectionLabel("PILIH KENDALA", theme),
-                          const SizedBox(height: 6),
-                          Text(
-                            "Beritahu kami masalah yang kamu alami",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.5),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          _buildReasonList(theme, isDark),
-
-                          const SizedBox(height: 24),
-
-                          // ─────────────────────
-                          // DETAIL MASALAH
-                          // ─────────────────────
-                          _sectionLabel("DETAIL MASALAH", theme),
-                          const SizedBox(height: 12),
-                          _buildDescriptionField(theme, isDark),
-
-                          const SizedBox(height: 24),
-
-                          // ─────────────────────
-                          // UNGGAH BUKTI
-                          // ─────────────────────
-                          _sectionLabel("UNGGAH BUKTI", theme),
-                          const SizedBox(height: 12),
-                          _buildUploadArea(theme, isDark),
-
-                          const SizedBox(height: 20),
-
-                          // ─────────────────────
-                          // WARNING BANNER
-                          // ─────────────────────
-                          _buildWarningBanner(theme),
-
-                          const SizedBox(height: 32),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // ──────────────────────────────
-                  // BOTTOM SUBMIT BUTTON
-                  // ──────────────────────────────
-                  _buildBottomBar(context, theme, isDark, order),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  // ────────────────────────────────────────────
-  // PRODUCT HEADER CARD
-  // ────────────────────────────────────────────
-  Widget _buildProductCard(BuildContext context, ThemeData theme, bool isDark,
-      Map order, dynamic imageUrl) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          colors: isDark
-              ? [
-                  Colors.white.withValues(alpha: 0.07),
-                  Colors.white.withValues(alpha: 0.02),
-                ]
-              : [Colors.white, Colors.grey.shade50],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : Colors.black.withValues(alpha: 0.04),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: theme.colorScheme.primary.withValues(alpha: 0.1),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // Thumbnail
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: theme.colorScheme.primary.withValues(alpha: 0.25),
-              ),
-              color: isDark
-                  ? Colors.black.withValues(alpha: 0.3)
-                  : Colors.grey.shade100,
-            ),
-            clipBehavior: Clip.hardEdge,
-            child: (imageUrl != null && imageUrl.toString().isNotEmpty)
-                ? Image.network(
-                    imageUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Icon(
-                      Icons.inventory_2_outlined,
-                      color: theme.colorScheme.primary.withValues(alpha: 0.5),
-                      size: 26,
-                    ),
-                  )
-                : Icon(
-                    Icons.inventory_2_outlined,
-                    color: theme.colorScheme.primary.withValues(alpha: 0.5),
-                    size: 26,
-                  ),
-          ),
-
-          const SizedBox(width: 14),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(6),
-                    color: theme.colorScheme.primary.withValues(alpha: 0.12),
-                    border: Border.all(
-                      color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  child: Text(
-                    "PREMIUM SUBSCRIPTION",
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.8,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 6),
-
-                Text(
-                  order['product_name'] ?? '-',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  "Variant: ${order['variant_type'] ?? '-'}",
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Shield icon — garansi aktif
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.green.withValues(alpha: 0.12),
-              border: Border.all(
-                color: Colors.green.withValues(alpha: 0.3),
-              ),
-            ),
-            child: const Icon(
-              Icons.verified_user_outlined,
-              color: Colors.green,
-              size: 18,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────
-  // REASON LIST — icon per alasan + glow selected
-  // ────────────────────────────────────────────
-  Widget _buildReasonList(ThemeData theme, bool isDark) {
-    return Column(
-      children: reasons.map((r) {
-        final isSelected = selectedReason == r.$1;
-
-        return GestureDetector(
-          onTap: () => setState(() => selectedReason = r.$1),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              gradient: LinearGradient(
-                colors: isSelected
-                    ? isDark
-                        ? [
-                            theme.colorScheme.primary.withValues(alpha: 0.2),
-                            theme.colorScheme.secondary
-                                .withValues(alpha: 0.1),
-                          ]
-                        : [
-                            theme.colorScheme.primary.withValues(alpha: 0.07),
-                            theme.colorScheme.secondary
-                                .withValues(alpha: 0.04),
-                          ]
-                    : isDark
-                        ? [
-                            Colors.white.withValues(alpha: 0.05),
-                            Colors.white.withValues(alpha: 0.02),
-                          ]
-                        : [Colors.white, Colors.grey.shade50],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(
-                color: isSelected
-                    ? theme.colorScheme.primary.withValues(alpha: 0.6)
-                    : isDark
-                        ? Colors.white.withValues(alpha: 0.07)
-                        : Colors.black.withValues(alpha: 0.05),
-                width: isSelected ? 1.5 : 0.8,
-              ),
-              boxShadow: isSelected
-                  ? [
-                      BoxShadow(
-                        color: theme.colorScheme.primary
-                            .withValues(alpha: 0.18),
-                        blurRadius: 16,
-                        offset: const Offset(0, 4),
-                      ),
-                    ]
-                  : [],
-            ),
-            child: Row(
-              children: [
-                // Ikon alasan
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isSelected
-                        ? theme.colorScheme.primary.withValues(alpha: 0.15)
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.06),
-                    border: Border.all(
-                      color: isSelected
-                          ? theme.colorScheme.primary.withValues(alpha: 0.4)
-                          : Colors.transparent,
-                    ),
-                  ),
-                  child: Icon(
-                    r.$2,
-                    size: 18,
-                    color: isSelected
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.4),
-                  ),
-                ),
-
-                const SizedBox(width: 12),
-
-                Expanded(
-                  child: Text(
-                    r.$1,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: isSelected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-
-                // Checkmark
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: isSelected
-                      ? Container(
-                          key: const ValueKey('check'),
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: theme.colorScheme.primary,
-                          ),
-                          child: const Icon(
-                            Icons.check,
-                            size: 13,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Container(
-                          key: const ValueKey('empty'),
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.2),
-                            ),
-                          ),
-                        ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  // ────────────────────────────────────────────
-  // DESCRIPTION FIELD — konsisten EditProfilePage
-  // ────────────────────────────────────────────
-  Widget _buildDescriptionField(ThemeData theme, bool isDark) {
-    return TextField(
-      controller: _descController,
-      maxLines: 4,
-      style: TextStyle(
-        fontSize: 14,
-        color: theme.colorScheme.onSurface,
-      ),
-      decoration: InputDecoration(
-        hintText: "Deskripsikan kejadian yang kamu alami...",
-        hintStyle: TextStyle(
-          fontSize: 13,
-          color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
-        ),
-        filled: true,
-        fillColor: isDark
-            ? Colors.black.withValues(alpha: 0.35)
-            : Colors.grey.shade100,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppConstants.radius),
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppConstants.radius),
-          borderSide: BorderSide(
-            color: theme.colorScheme.primary.withValues(alpha: 0.5),
-            width: 1.5,
+  Widget _fieldLabel(String text, ThemeData theme) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.4,
+            color: theme.colorScheme.primary.withValues(alpha: 0.75),
           ),
         ),
-        contentPadding: const EdgeInsets.all(16),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────
-  // UPLOAD AREA — konsisten PaymentPage
-  // ────────────────────────────────────────────
-  Widget _buildUploadArea(ThemeData theme, bool isDark) {
-    return GestureDetector(
-      onTap: _pickImage,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        height: imageBytes != null ? 180 : 130,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.04)
-              : theme.colorScheme.primary.withValues(alpha: 0.03),
-          border: Border.all(
-            color: imageBytes != null
-                ? theme.colorScheme.primary.withValues(alpha: 0.5)
-                : isDark
-                    ? Colors.white.withValues(alpha: 0.15)
-                    : theme.colorScheme.primary.withValues(alpha: 0.25),
-            width: 1.0,
-          ),
-        ),
-        child: imageBytes != null
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Image.memory(imageBytes!, fit: BoxFit.cover),
-                    Positioned(
-                      bottom: 10,
-                      right: 10,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          color: Colors.black.withValues(alpha: 0.6),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.edit, size: 13, color: Colors.white),
-                            SizedBox(width: 4),
-                            Text(
-                              "Ganti",
-                              style: TextStyle(
-                                  fontSize: 11, color: Colors.white),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: theme.colorScheme.primary.withValues(alpha: 0.1),
-                      border: Border.all(
-                        color: theme.colorScheme.primary
-                            .withValues(alpha: 0.25),
-                      ),
-                    ),
-                    child: Icon(
-                      Icons.cloud_upload_outlined,
-                      color: theme.colorScheme.primary,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    "Upload Screenshot",
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    "JPG, PNG • Maks 5MB",
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: theme.colorScheme.onSurface
-                          .withValues(alpha: 0.4),
-                    ),
-                  ),
-                ],
-              ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────
-  // WARNING BANNER
-  // ────────────────────────────────────────────
-  Widget _buildWarningBanner(ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Colors.amber.withValues(alpha: 0.1),
-        border: Border.all(
-          color: Colors.amber.withValues(alpha: 0.35),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.amber.withValues(alpha: 0.15),
-            ),
-            child: const Icon(
-              Icons.info_outline_rounded,
-              color: Colors.amber,
-              size: 17,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "Perhatian",
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.amber.shade700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  "Klaim akan diproses dalam 1×24 jam. Pastikan semua data yang kamu isi sudah benar.",
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.5,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────
-  // BOTTOM BAR — konsisten semua halaman
-  // ────────────────────────────────────────────
-  Widget _buildBottomBar(
-      BuildContext context, ThemeData theme, bool isDark, Map order) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isDark
-              ? [
-                  const Color(0xFF0A0A14).withValues(alpha: 0.0),
-                  const Color(0xFF0A0A14),
-                ]
-              : [
-                  Colors.white.withValues(alpha: 0.0),
-                  Colors.white,
-                ],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
-      child: GestureDetector(
-        onTap: _isSubmitting ? null : () => _submitClaim(order),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          height: 52,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppConstants.radius),
-            gradient: _isSubmitting
-                ? LinearGradient(
-                    colors: [
-                      theme.colorScheme.primary.withValues(alpha: 0.5),
-                      theme.colorScheme.secondary.withValues(alpha: 0.5),
-                    ],
-                  )
-                : LinearGradient(
-                    colors: [
-                      theme.colorScheme.primary,
-                      theme.colorScheme.secondary,
-                    ],
-                  ),
-            boxShadow: _isSubmitting
-                ? []
-                : [
-                    BoxShadow(
-                      color: theme.colorScheme.primary.withValues(alpha: 0.45),
-                      blurRadius: 18,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-          ),
-          child: Center(
-            child: _isSubmitting
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: isDark ? Colors.black : Colors.white,
-                    ),
-                  )
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        "Kirim Laporan Klaim",
-                        style: TextStyle(
-                          color: isDark ? Colors.black : Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(
-                        Icons.send_rounded,
-                        size: 18,
-                        color: isDark ? Colors.black : Colors.white,
-                      ),
-                    ],
-                  ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────
-  // SECTION LABEL — uppercase konsisten
-  // ────────────────────────────────────────────
-  Widget _sectionLabel(String text, ThemeData theme) {
-    return Text(
-      text,
-      style: TextStyle(
-        fontSize: 10,
-        fontWeight: FontWeight.bold,
-        letterSpacing: 1.4,
-        color: theme.colorScheme.primary.withValues(alpha: 0.75),
-      ),
-    );
-  }
+      );
 }

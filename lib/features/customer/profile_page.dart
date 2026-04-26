@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/constants.dart';
 import '../../core/theme_provider.dart';
 import '../../widgets/navbar/bottom_navbar.dart';
+import '../../widgets/cards/connectivity.dart';
 
 
 class ProfilePage extends StatefulWidget {
@@ -295,8 +296,12 @@ class _ProfilePageState extends State<ProfilePage>
                                 color: theme.colorScheme.primary,
                               ),
                             ),
+                                const ConnectivityIndicator(),
+
+                                const SizedBox(width: 50),
                           ],
                         ),
+
 
                         const SizedBox(height: 28),
 

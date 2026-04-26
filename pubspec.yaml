@@ -10,12 +10,14 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_dotenv: ^6.0.0
-  image_picker: ^1.2.1
+  image_picker: ^1.1.2
   provider: ^6.0.5
   supabase_flutter: ^2.12.2
   url_launcher: ^6.2.5
   intl: ^0.18.1
   fl_chart: ^0.68.0
+  connectivity_plus: ^6.0.3
+  sensors_plus: ^5.0.1
 
 dev_dependencies:
   flutter_test:

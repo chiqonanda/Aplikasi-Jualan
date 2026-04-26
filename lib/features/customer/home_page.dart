@@ -4,6 +4,7 @@ import '../../core/constants.dart';
 import '../../widgets/navbar/bottom_navbar.dart';
 import '../../widgets/shared/section_header.dart';
 import '../../services/product_service.dart';
+import '../../widgets/cards/connectivity.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -251,6 +252,7 @@ class _HomePageState extends State<HomePage>
         ),
 
         const Spacer(),
+        const ConnectivityIndicator(),
 
       ],
     );

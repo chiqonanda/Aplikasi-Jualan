@@ -1,4 +1,18 @@
+// ============================================================
+// SENSOR 3: ACCELEROMETER — Shake to Refresh
+// Package: sensors_plus
+// Tambahkan di pubspec.yaml:
+//   sensors_plus: ^5.0.1
+//
+// Tidak perlu permission tambahan untuk accelerometer.
+// Sensor ini membaca gerakan fisik device secara realtime.
+// ============================================================
+
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 import '../../core/constants.dart';
 import '../../widgets/navbar/bottom_navbar.dart';
 import '../../widgets/cards/order_card.dart';
@@ -27,9 +41,26 @@ class _OrderPageState extends State<OrderPage>
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
 
+  // ══════════════════════════════════════════════════
+  // SENSOR ACCELEROMETER: State & subscription
+  // ══════════════════════════════════════════════════
+  StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
+
+  // Threshold: seberapa keras goyangan yang dianggap "shake"
+  static const double _shakeThreshold = 15.0;
+
+  // Debounce: jeda minimum antar shake agar tidak double-trigger
+  static const int _shakeDebounceMs = 1500;
+
+  DateTime? _lastShakeTime;
+
+  // Untuk animasi visual feedback saat shake
+  bool _isShaking = false;
+
   @override
   void initState() {
     super.initState();
+
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -39,16 +70,110 @@ class _OrderPageState extends State<OrderPage>
     _slideAnim = Tween<Offset>(
       begin: const Offset(0, 0.06),
       end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeOut));
+    ).animate(
+        CurvedAnimation(parent: _animController, curve: Curves.easeOut));
+
     _fetchOrders();
+
+    // ✅ SENSOR: Mulai listen accelerometer
+    _startAccelerometer();
   }
 
   @override
   void dispose() {
     _animController.dispose();
     _searchController.dispose();
+
+    // ✅ SENSOR: Wajib cancel subscription saat dispose
+    _accelerometerSubscription?.cancel();
+
     super.dispose();
   }
+
+  // ══════════════════════════════════════════════════
+  // SENSOR: Inisialisasi accelerometer listener
+  // ══════════════════════════════════════════════════
+  void _startAccelerometer() {
+    _accelerometerSubscription = accelerometerEventStream(
+      samplingPeriod: SensorInterval.normalInterval,
+    ).listen(
+      (AccelerometerEvent event) {
+
+        final double gForce = sqrt(
+          event.x * event.x +
+          event.y * event.y +
+          event.z * event.z,
+        );
+
+        // ✅ SENSOR: Deteksi shake jika gaya melebihi threshold
+        if (gForce > _shakeThreshold) {
+          _onShakeDetected();
+        }
+      },
+      onError: (error) {
+        // Sensor tidak tersedia di device ini (emulator, dll)
+        debugPrint('Accelerometer tidak tersedia: $error');
+      },
+    );
+  }
+
+  // ✅ SENSOR: Handler saat shake terdeteksi
+  void _onShakeDetected() {
+    final now = DateTime.now();
+
+    // Debounce: abaikan shake yang terlalu cepat berturutan
+    if (_lastShakeTime != null &&
+        now.difference(_lastShakeTime!).inMilliseconds < _shakeDebounceMs) {
+      return;
+    }
+
+    // Jangan refresh jika sedang loading
+    if (_isLoading) return;
+
+    _lastShakeTime = now;
+
+    // ✅ Haptic feedback — getaran kecil sebagai konfirmasi
+    HapticFeedback.mediumImpact();
+
+    // Visual feedback
+    setState(() => _isShaking = true);
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (mounted) setState(() => _isShaking = false);
+    });
+
+    // Tampilkan toast dan refresh data
+    _showShakeToast();
+    _fetchOrders();
+  }
+
+  void _showShakeToast() {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Text("🔄", style: TextStyle(fontSize: 16)),
+            SizedBox(width: 8),
+            Text(
+              "Memperbarui data order...",
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF1B1B2F),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ──────────────────────────────────────────────────────
+  // Fetch, filter, count — sama seperti sebelumnya
+  // ──────────────────────────────────────────────────────
 
   Future<void> _fetchOrders() async {
     setState(() {
@@ -90,7 +215,6 @@ class _OrderPageState extends State<OrderPage>
       final isActive = status == 'approved' && remaining > 0;
       final isPending = status == 'pending';
       final isExpired = status == 'approved' && remaining == 0;
-      // ✅ Tambah rejected
       final isRejected = status == 'rejected';
 
       final matchFilter = _selectedFilter == 'all' ||
@@ -134,7 +258,7 @@ class _OrderPageState extends State<OrderPage>
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: isDark ? AppConstants.darkBg1 : Colors.white,
+      backgroundColor: Colors.transparent,
       extendBody: true,
       bottomNavigationBar: const CustomBottomNavbar(currentIndex: 2),
       body: Container(
@@ -163,14 +287,13 @@ class _OrderPageState extends State<OrderPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
 
-              // ── Header (fixed, tidak scroll)
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
 
-                    // Navbar row
+                    // Navbar
                     Row(
                       children: [
                         Icon(Icons.blur_on,
@@ -186,6 +309,40 @@ class _OrderPageState extends State<OrderPage>
                           ),
                         ),
                         const Spacer(),
+                        // ✅ SENSOR: Indikator visual saat shake terdeteksi
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            color: _isShaking
+                                ? theme.colorScheme.primary
+                                    .withValues(alpha: 0.2)
+                                : Colors.transparent,
+                            border: Border.all(
+                              color: _isShaking
+                                  ? theme.colorScheme.primary
+                                      .withValues(alpha: 0.4)
+                                  : Colors.transparent,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _isShaking ? "🔄 Refreshing..." : "shake to refresh",
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: theme.colorScheme.onSurface
+                                      .withValues(alpha: _isShaking ? 0.8 : 0.3),
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
                         GestureDetector(
                           onTap: _isLoading ? null : _fetchOrders,
                           child: Container(
@@ -207,7 +364,8 @@ class _OrderPageState extends State<OrderPage>
                                     ),
                                   )
                                 : Icon(Icons.refresh_rounded,
-                                    size: 18, color: theme.colorScheme.primary),
+                                    size: 18,
+                                    color: theme.colorScheme.primary),
                           ),
                         ),
                       ],
@@ -311,7 +469,7 @@ class _OrderPageState extends State<OrderPage>
 
                     const SizedBox(height: 12),
 
-                    // ✅ Filter chips — SingleChildScrollView agar tidak overflow
+                    // Filter chips
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
@@ -325,12 +483,11 @@ class _OrderPageState extends State<OrderPage>
                           _filterChip('pending', 'Pending', Colors.orange,
                               theme, isDark),
                           const SizedBox(width: 8),
-                          _filterChip('expired', 'Expired', Colors.redAccent,
-                              theme, isDark),
+                          _filterChip('expired', 'Expired',
+                              Colors.redAccent, theme, isDark),
                           const SizedBox(width: 8),
-                          // ✅ Tab Rejected untuk user
-                          _filterChip('rejected', 'Ditolak',
-                              Colors.grey, theme, isDark),
+                          _filterChip('rejected', 'Ditolak', Colors.grey,
+                              theme, isDark),
                         ],
                       ),
                     ),
@@ -340,13 +497,27 @@ class _OrderPageState extends State<OrderPage>
                 ),
               ),
 
-              // ── List content (scrollable)
+              // List content
               Expanded(
                 child: _isLoading
                     ? Center(
-                        child: CircularProgressIndicator(
-                          color: theme.colorScheme.primary,
-                          strokeWidth: 2.5,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(
+                              color: theme.colorScheme.primary,
+                              strokeWidth: 2.5,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              "Memuat order...",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.45),
+                              ),
+                            ),
+                          ],
                         ),
                       )
                     : _errorMessage != null
@@ -362,13 +533,15 @@ class _OrderPageState extends State<OrderPage>
                                       child: ListView.builder(
                                         physics:
                                             const BouncingScrollPhysics(),
-                                        padding: const EdgeInsets.fromLTRB(
-                                            24, 0, 24, 100),
+                                        padding:
+                                            const EdgeInsets.fromLTRB(
+                                                24, 0, 24, 100),
                                         itemCount: _filteredOrders.length,
                                         itemBuilder: (_, i) =>
                                             PremiumOrderCard(
                                           data: _filteredOrders[i],
-                                          onTap: () => Navigator.pushNamed(
+                                          onTap: () =>
+                                              Navigator.pushNamed(
                                             context,
                                             '/order-detail',
                                             arguments: _filteredOrders[i],
@@ -388,11 +561,8 @@ class _OrderPageState extends State<OrderPage>
   // ── Widget helpers ────────────────────────────────────────────────
 
   Widget _filterChip(
-    String value,
-    String label,
-    Color? color,
-    ThemeData theme,
-    bool isDark,
+    String value, String label, Color? color,
+    ThemeData theme, bool isDark,
   ) {
     final isSelected = _selectedFilter == value;
     final count = _countByFilter(value);
@@ -432,10 +602,9 @@ class _OrderPageState extends State<OrderPage>
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: chipColor.withValues(alpha: 0.35),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
+                      color: chipColor.withValues(alpha: 0.35),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2))
                 ]
               : [],
         ),
@@ -464,10 +633,9 @@ class _OrderPageState extends State<OrderPage>
                 child: Text(
                   "$count",
                   style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: chipColor,
-                  ),
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: chipColor),
                 ),
               ),
             ],
@@ -495,13 +663,11 @@ class _OrderPageState extends State<OrderPage>
                   color: theme.colorScheme.primary.withValues(alpha: 0.5)),
             ),
             const SizedBox(height: 16),
-            Text(
-              "Belum Ada Order",
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface),
-            ),
+            Text("Belum Ada Order",
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.onSurface)),
             const SizedBox(height: 6),
             Text(
               "Kamu belum melakukan pembelian.\nYuk beli produk premium sekarang!",
@@ -509,8 +675,7 @@ class _OrderPageState extends State<OrderPage>
               style: TextStyle(
                   fontSize: 13,
                   height: 1.5,
-                  color:
-                      theme.colorScheme.onSurface.withValues(alpha: 0.45)),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.45)),
             ),
             const SizedBox(height: 20),
             GestureDetector(
@@ -519,28 +684,23 @@ class _OrderPageState extends State<OrderPage>
                 padding: const EdgeInsets.symmetric(
                     horizontal: 28, vertical: 12),
                 decoration: BoxDecoration(
-                  borderRadius:
-                      BorderRadius.circular(AppConstants.radius),
+                  borderRadius: BorderRadius.circular(AppConstants.radius),
                   gradient: LinearGradient(colors: [
                     theme.colorScheme.primary,
                     theme.colorScheme.secondary,
                   ]),
                   boxShadow: [
                     BoxShadow(
-                      color: theme.colorScheme.primary
-                          .withValues(alpha: 0.35),
-                      blurRadius: 14,
-                      offset: const Offset(0, 4),
-                    ),
+                        color: theme.colorScheme.primary
+                            .withValues(alpha: 0.35),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4))
                   ],
                 ),
-                child: Text(
-                  "Lihat Produk →",
-                  style: TextStyle(
-                    color: isDark ? Colors.black : Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                child: Text("Lihat Produk →",
+                    style: TextStyle(
+                        color: isDark ? Colors.black : Colors.white,
+                        fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -558,21 +718,16 @@ class _OrderPageState extends State<OrderPage>
               size: 44,
               color: theme.colorScheme.onSurface.withValues(alpha: 0.2)),
           const SizedBox(height: 12),
-          Text(
-            "Tidak ada hasil",
-            style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
-          ),
+          Text("Tidak ada hasil",
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.4))),
           const SizedBox(height: 4),
-          Text(
-            "Coba ubah filter atau kata kunci",
-            style: TextStyle(
-                fontSize: 12,
-                color:
-                    theme.colorScheme.onSurface.withValues(alpha: 0.3)),
-          ),
+          Text("Coba ubah filter atau kata kunci",
+              style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.3))),
         ],
       ),
     );
@@ -588,30 +743,24 @@ class _OrderPageState extends State<OrderPage>
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.redAccent.withValues(alpha: 0.1),
-              ),
+                  shape: BoxShape.circle,
+                  color: Colors.redAccent.withValues(alpha: 0.1)),
               child: const Icon(Icons.wifi_off_outlined,
                   size: 36, color: Colors.redAccent),
             ),
             const SizedBox(height: 16),
-            Text(
-              "Gagal Memuat Order",
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface),
-            ),
+            Text("Gagal Memuat Order",
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.onSurface)),
             const SizedBox(height: 6),
-            Text(
-              _errorMessage ?? "Terjadi kesalahan",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 13,
-                  color:
-                      theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                  height: 1.5),
-            ),
+            Text(_errorMessage ?? "Terjadi kesalahan",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                    height: 1.5)),
             const SizedBox(height: 20),
             GestureDetector(
               onTap: _fetchOrders,
@@ -619,26 +768,22 @@ class _OrderPageState extends State<OrderPage>
                 padding: const EdgeInsets.symmetric(
                     horizontal: 28, vertical: 12),
                 decoration: BoxDecoration(
-                  borderRadius:
-                      BorderRadius.circular(AppConstants.radius),
+                  borderRadius: BorderRadius.circular(AppConstants.radius),
                   gradient: LinearGradient(colors: [
                     theme.colorScheme.primary,
                     theme.colorScheme.secondary,
                   ]),
                   boxShadow: [
                     BoxShadow(
-                      color: theme.colorScheme.primary
-                          .withValues(alpha: 0.35),
-                      blurRadius: 14,
-                      offset: const Offset(0, 4),
-                    ),
+                        color: theme.colorScheme.primary
+                            .withValues(alpha: 0.35),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4))
                   ],
                 ),
-                child: const Text(
-                  "Coba Lagi",
-                  style: TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold),
-                ),
+                child: const Text("Coba Lagi",
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
