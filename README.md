@@ -249,6 +249,5 @@ lib/
     <td><img width="317" height="696" alt="image" src="https://github.com/user-attachments/assets/2fca8679-3661-49b8-9df7-33ef3c3126ca" /></td>
   </tr>
   </table>
-#   A p l i k a s i - J u a l a n  
- #   A p l i k a s i - J u a l a n  
+
  
